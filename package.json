@@ -1,0 +1,12 @@
+{
+  "name": "discord-antiraid-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "tsx": "^4.19.2"
+  }
+}
