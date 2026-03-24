@@ -272,7 +272,8 @@ client.on("messageCreate", async (message: Message) => {
     }
     try {
       await message.delete();
-      const deleted = await (message.channel as TextChannel).bulkDelete(amount, true);
+      const fetched = await (message.channel as TextChannel).messages.fetch({ limit: amount });
+      const deleted = await (message.channel as TextChannel).bulkDelete(fetched, true);
       await (message.channel as TextChannel).send("Successfully MasterGooned - Aura +9999");
       console.log(`[GOON] Deleted ${deleted.size} message(s) in ${message.guild.name}`);
     } catch (err) {
